@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <string.h>
 #include <assert.h>
+#include <inttypes.h>
 #if defined( WINDOWS ) || defined( WIN32 )
 #ifdef _MSC_VER
 #define strdup _strdup
@@ -24,11 +25,15 @@
 #include <netdb.h>
 #endif
 
-#ifndef CNFGOGL
+#if !defined(__APPLE__) && !defined(CNFGOGL)
 #define CNFGOGL
 #endif
 
+#ifndef __APPLE__
 #define CNFG_IMPLEMENTATION
+#else
+#include "macos/CNFGMac.h"
+#endif
 #include "rawdraw/os_generic.h"
 #include "rawdraw/CNFG.h"
 #include "ping.h"
@@ -145,17 +150,18 @@ void HTTPingCallbackStart( int seqno, unsigned int pingHostId )
 {
 	struct PingData * pd = PingData + pingHostId;
 	pd->current_cycle = seqno;
-	HandleNewPacket( pd, seqno );
+	HandleNewPacket( pd, seqno & (PINGCYCLEWIDTH-1) );
 }
 
 void HTTPingCallbackGot( int seqno, unsigned int pingHostId )
 {
 	struct PingData * pd = PingData + pingHostId;
-	HandleGotPacket( pd, seqno, 0 );
+	HandleGotPacket( pd, seqno & (PINGCYCLEWIDTH-1), 0 );
 }
 
 void display( uint8_t *buf, int bytes, unsigned int pingHostId )
 {
+	if (bytes < 4 + (int)sizeof(pattern)) return;
 	struct PingData * pd = PingData + pingHostId;
 	int reqid = (buf[0] << 24) | (buf[1]<<16) | (buf[2]<<8) | (buf[3]);
 	debug("Received ping: reqid=%d\n", reqid);
@@ -438,11 +444,7 @@ void DrawFrameHistogram( const char * pinghost, unsigned int count, unsigned int
 
 
 			CNFGPenX = startx + (8-log10) * 4; CNFGPenY = bottom+3;
-#ifdef WIN32
-			sprintf( stbuf, "%I64u", samps );
-#else
-			sprintf( stbuf, "%lu", samps );
-#endif
+			sprintf( stbuf, "%" PRIu64, samps );
 			CNFGDrawText( stbuf, 2 );
 
 			CNFGPenX = startx; CNFGPenY = bottom+14;
@@ -450,11 +452,7 @@ void DrawFrameHistogram( const char * pinghost, unsigned int count, unsigned int
 			CNFGDrawText( stbuf, 2 );
 		}
 		char stt[1024];
-#ifdef WIN32
-		snprintf( stt, 1024, "Host: %s\nHistorical max  %9.2fms\nBiggest interval%9.2fms\nHistorical packet loss %I64u/%I64u = %6.3f%%",
-#else
-		snprintf( stt, 1024, "Host: %s\nHistorical max  %9.2fms\nBiggest interval%9.2fms\nHistorical packet loss %lu/%lu = %6.3f%%",
-#endif
+		snprintf( stt, 1024, "Host: %s\nHistorical max  %9.2fms\nBiggest interval%9.2fms\nHistorical packet loss %" PRIu64 "/%" PRIu64 " = %6.3f%%",
 			pinghost, pd->globmaxtime*1000.0, pd->globinterval*1000.0, pd->globallost, pd->globalrx, pd->globallost*100.0/(pd->globalrx+pd->globallost) );
 		if( !in_frame_mode )
 			DrawMainText( stt, heightOffset );
@@ -586,11 +584,7 @@ void DrawFrame( const char * pinghost, unsigned int count, unsigned int pingHost
 		"Min :%6.2f ms\n"
 		"Max :%6.2f ms    Historical max:   %5.2f ms\n"
 		"Avg :%6.2f ms    Biggest interval: %5.2f ms\n"
-#ifdef WIN32
-		"Std :%6.2f ms    Historical loss:  %I64u/%I64u %5.3f%%\n"
-#else
-		"Std :%6.2f ms    Historical loss:  %lu/%lu %5.3f%%\n"
-#endif
+		"Std :%6.2f ms    Historical loss:  %" PRIu64 "/%" PRIu64 " %5.3f%%\n"
 		"Loss:%6.1f %%", last, pinghost, mintime, maxtime, pd->globmaxtime*1000, avg, pd->globinterval*1000.0, stddev,
 		pd->globallost, pd->globalrx+pd->globallost, pd->globallost*100.0f/(pd->globalrx+pd->globallost), loss );
 
@@ -749,6 +743,16 @@ int main( int argc, const char ** argv )
 	title[0] = 0;
 	GuiYScaleFactor = 0;
 
+#ifdef __APPLE__
+	// Finder launches the app without a target. Keep command-line behavior intact.
+	if (argc == 1 && MacIsAppBundle())
+	{
+		char *host = MacPromptForHost();
+		if (!host) return 0;
+		appendPingHost(&pinghostList, &pinghostListSize, host);
+	}
+#endif
+
 	//We need to process all the unmarked parameters.
 	int argcunmarked = 1;
 	int displayhelp = 0;
@@ -822,7 +826,9 @@ int main( int argc, const char ** argv )
 		sprintf( title, "%s - cnping "VERSION, pinghostList->host );
 	}
 
-#if defined( WIN32 ) || defined( WINDOWS )
+#if defined(__APPLE__)
+	if (CNFGSetup(title, 320, 155 * pinghostListSize) != 0) return 1;
+#elif defined( WIN32 ) || defined( WINDOWS )
 	if(device)
 	{
 		ERRM("Error: Device option is not implemented on your platform. PRs welcome.\n");

@@ -37,6 +37,9 @@ int resolveName(struct sockaddr* addr, socklen_t* addr_len, const char* hostname
 		if(result == 1)
 		{
 			addr->sa_family = AF_INET;
+#ifdef __APPLE__
+			addr->sa_len = sizeof(struct sockaddr_in);
+#endif
 			*addr_len = sizeof(struct sockaddr_in);
 			return 1;
 		}
@@ -48,6 +51,9 @@ int resolveName(struct sockaddr* addr, socklen_t* addr_len, const char* hostname
 		if(result == 1)
 		{
 			addr->sa_family = AF_INET6;
+#ifdef __APPLE__
+			addr->sa_len = sizeof(struct sockaddr_in6);
+#endif
 			*addr_len = sizeof(struct sockaddr_in6);
 			return 1;
 		}

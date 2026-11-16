@@ -1,7 +1,7 @@
 cnping
 ======
 
-Minimal Graphical IPV4 Ping/HTTP Ping Tool.  (also comes with searchnet, like nmap but smaller and simpler).  It uses rawdraw so it is OS independent.
+This is a macOS-compatible fork of [cntools/cnping](https://github.com/cntools/cnping), a minimal graphical ICMP and HTTP ping tool. On macOS it uses a native Cocoa window and supports unprivileged ICMP ping sockets. The project also includes `searchnet`, a small network scanner.
 ```
 Usage: cnping [host] [period] [extra size] [y-axis scaling] [window title]
 
@@ -20,6 +20,34 @@ If a regular hostname is requested instead, ICMP (regular ping) will be used.
 This allows cnping to be operated in environments where ICMP is prohibited by local computer or network policies.
 
 ## Installation
+
+### macOS
+
+CNPing runs natively on macOS 11 or later; you do not need XQuartz or Homebrew. To build it, install the Apple Command Line Tools if you do not already have them:
+
+```sh
+xcode-select --install
+```
+
+From a checkout of this branch, initialize its graphics submodule and build the app:
+
+```sh
+git submodule update --init --recursive
+make app
+open CNPing.app
+```
+
+When launched from Finder, the app asks for a hostname, IP address, or HTTP URL. You can also launch the executable from Terminal with a target and optional parameters:
+
+```sh
+make
+./cnping 1.1.1.1
+./cnping http://example.com
+```
+
+The Mac build uses ICMP datagram sockets and normally does not need `sudo`. HTTP mode supports `http://` URLs; HTTPS is not supported. On recent macOS versions, allow local network access if prompted and you want to ping a device on your local network.
+
+In the graph window, press `f` to toggle the graph, `m` to toggle the histogram, or `c` to clear the statistics. Drag the graph to inspect earlier samples; click **LIVE** to return to the latest data. Close the window or press `q` to quit.
 
 ### Ubuntu
 

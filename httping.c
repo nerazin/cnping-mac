@@ -24,6 +24,10 @@
 	#include <netinet/in.h>
 	#include <netinet/tcp.h>
 	#include <netdb.h>
+	#ifdef __APPLE__
+		#include <net/if.h>
+		#define SOL_TCP IPPROTO_TCP
+	#endif
 #endif
 
 #include "rawdraw/os_generic.h"
@@ -105,7 +109,13 @@ reconnect:
 #if !defined( WIN32 ) && !defined( WINDOWS )
 	if(device)
 	{
+#ifdef __APPLE__
+		unsigned int index = if_nametoindex(device);
+		if (!index || setsockopt(httpsock, serveraddr.sin6_family == AF_INET ? IPPROTO_IP : IPPROTO_IPV6,
+			serveraddr.sin6_family == AF_INET ? IP_BOUND_IF : IPV6_BOUND_IF, &index, sizeof(index)) != 0)
+#else
 		if( setsockopt(httpsock, SOL_SOCKET, SO_BINDTODEVICE, device, strlen(device) +1) != 0)
+#endif
 		{
 			ERRM("Error: Failed to set Device option.\n");
 			exit( -1 );

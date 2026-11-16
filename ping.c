@@ -231,6 +231,9 @@ void ping( struct PreparedPing* pp )
 	#include <netinet/ip.h>
 	#include <netinet/ip_icmp.h>
 	#include <netinet/icmp6.h>
+	#ifdef __APPLE__
+		#include <net/if.h>
+	#endif
 #endif
 
 #include "rawdraw/os_generic.h"
@@ -251,7 +254,7 @@ struct icmphdr
 		uint32_t	gateway;
 		struct
 		{
-			uint16_t	__unused;
+			uint16_t	unused_field;
 			uint16_t	mtu;
 		} frag;
 	} un;
@@ -312,9 +315,15 @@ void setTTL( int sock, int family )
 
 	assert(family == AF_INET || family == AF_INET6);
 
+#ifdef __APPLE__
+	int level = family == AF_INET ? IPPROTO_IP : IPPROTO_IPV6;
+	int option = family == AF_INET ? IP_TTL : IPV6_UNICAST_HOPS;
+	if ( setsockopt( sock, level, option, &val, sizeof(val)) != 0)
+#else
 	if ( setsockopt( sock, (family == AF_INET) ? SOL_IP : SOL_IPV6, IP_TTL, &val, sizeof(val)) != 0)
+#endif
 	{
-		ERRM("Error: Failed to set TTL option.  Are you root?  Or can do sock_raw sockets?\n");
+		ERRM("Error: Failed to set TTL option: %s\n", strerror(errno));
 		exit( -1 );
 	}
 }
@@ -322,7 +331,10 @@ void setTTL( int sock, int family )
 
 void setNoBlock( int sock )
 {
-#ifdef WIN32
+#ifdef __APPLE__
+	// The listener shares this socket and must block while waiting for replies.
+	(void) sock;
+#elif defined(WIN32)
 	{
 		//Setup windows socket for nonblocking io.
 		unsigned long iMode = 1;
@@ -335,16 +347,25 @@ void setNoBlock( int sock )
 }
 
 // returns 1 = success; 0 = failed
-int bindDevice( int sock, const char* device )
+int bindDevice( int sock, int family, const char* device )
 {
 #ifdef WIN32
 	(void) sock;
 	(void) device;
 
 #else
+#ifndef __APPLE__
+	(void) family;
+#endif
 	if(device)
 	{
+#ifdef __APPLE__
+		unsigned int index = if_nametoindex(device);
+		if (!index || setsockopt(sock, family == AF_INET ? IPPROTO_IP : IPPROTO_IPV6,
+			family == AF_INET ? IP_BOUND_IF : IPV6_BOUND_IF, &index, sizeof(index)) != 0)
+#else
 		if( setsockopt( sock, SOL_SOCKET, SO_BINDTODEVICE, device, strlen(device) +1 ) != 0 )
+#endif
 		{
 			return 0;
 		}
@@ -364,7 +385,12 @@ int isICMPResponse( int family, unsigned char* buf, int bytes )
 	{
 		if( bytes < 21 ) return 0;
 		if( buf[9] != IPPROTO_ICMP ) return 0;
+#ifdef __APPLE__
+		int header_len = (buf[0] & 0x0f) * 4;
+		if (header_len < 20 || bytes < header_len + 8 || buf[header_len] != ICMP_ECHOREPLY) return 0;
+#else
 		if( buf[20] !=  ICMP_ECHOREPLY ) return 0;
+#endif
 
 	}
 	else if( family == AF_INET6 ) // ipv6 compare
@@ -391,11 +417,19 @@ int createSocket( int family )
 #else
 	if( family == AF_INET )
 	{
+#ifdef __APPLE__
+		return socket(PF_INET, SOCK_DGRAM, IPPROTO_ICMP);
+#else
 		return socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
+#endif
 	}
 	else if( family == AF_INET6 )
 	{
+#ifdef __APPLE__
+		return socket(PF_INET6, SOCK_DGRAM, IPPROTO_ICMPV6);
+#else
 		return socket(PF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
+#endif
 	}
 
 	// invalid af_family
@@ -405,9 +439,13 @@ int createSocket( int family )
 
 void listener( struct PreparedPing* pp )
 {
+#ifdef __APPLE__
+	// Datagram ICMP replies are delivered to the socket that sent the request.
+	int listenSock = pp->fd;
+#else
 	int listenSock = createSocket( pp->psaddr.sin6_family );
-
 	setTTL( listenSock, pp->psaddr.sin6_family );
+#endif
 
 	struct sockaddr_in6 recvFromAddr;
 	unsigned char buf[66000];
@@ -431,8 +469,15 @@ keep_retry_quick:
 		bytes = recvfrom( listenSock, (void*) buf, sizeof(buf), 0, (struct sockaddr*)&recvFromAddr, &recvFromAddrLen );
 		if( !isICMPResponse( recvFromAddr.sin6_family, buf, bytes) ) continue;
 
-		// compare the sender
+		// Compare addresses only on macOS: sockaddr length and port fields can differ.
+#ifdef __APPLE__
+		if (using_regular_ping && recvFromAddr.sin6_family == AF_INET &&
+		    ((struct sockaddr_in *)&recvFromAddr)->sin_addr.s_addr != ((struct sockaddr_in *)&pp->psaddr)->sin_addr.s_addr) continue;
+		if (using_regular_ping && recvFromAddr.sin6_family == AF_INET6 &&
+		    memcmp(&recvFromAddr.sin6_addr, &pp->psaddr.sin6_addr, sizeof(struct in6_addr)) != 0) continue;
+#else
 		if( using_regular_ping && memcmp(&recvFromAddr, &pp->psaddr, min(recvFromAddrLen, pp->psaddr_len) ) != 0 ) continue;
+#endif
 
 		// sizeof(packet.hdr) + 20
 		int offset = 0;
@@ -440,6 +485,8 @@ keep_retry_quick:
 		{
 #ifdef __FreeBSD__
 			offset = 48;
+#elif defined(__APPLE__)
+			offset = (buf[0] & 0x0f) * 4 + 8;
 #else
 			offset = 28;
 #endif
@@ -449,7 +496,7 @@ keep_retry_quick:
 			offset = 8;
 		}
 
-		if ( bytes > 0 )
+		if ( bytes >= offset )
 			display(buf + offset, bytes - offset, pp->pingHostId );
 		else
 		{
@@ -573,18 +620,19 @@ struct PreparedPing* ping_setup(const char * strhost, const char * device)
 	}
 
 	pp->fd = createSocket( pp->psaddr.sin6_family );
-	setTTL(pp->fd, pp->psaddr.sin6_family);
 
 	if ( pp->fd < 0 )
 	{
-		ERRM("Error: Could not create raw socket\n");
+		ERRM("Error: Could not create ICMP socket: %s\n", strerror(errno));
 		free(pp);
 		exit( -2 );
 	}
 
-	if( 0 == bindDevice( pp->fd, device ) )
+	setTTL(pp->fd, pp->psaddr.sin6_family);
+
+	if( 0 == bindDevice( pp->fd, pp->psaddr.sin6_family, device ) )
 	{
-		ERRM("Error: Failed to set Device option. Are you root? Or can do sock_raw sockets?\n");
+		ERRM("Error: Failed to set Device option.\n");
 		free( pp );
 		exit( -1 );
 	}

@@ -25,6 +25,7 @@ void * PingListen( void * r )
 void display(uint8_t *buf, int bytes, unsigned int pingHostId)
 {
 	(void) pingHostId;
+	if (bytes < 9) return;
 
 	uint32_t reqid = ((uint32_t)buf[0+1] << 24) | (buf[1+1]<<16) | (buf[2+1]<<8) | (buf[3+1]);
 

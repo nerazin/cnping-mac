@@ -1,6 +1,9 @@
-CFLAGS ?= -s -Os -I/opt/X11/include -Wall
-LDFLAGS ?= -s -L/opt/X11/lib/
-CC? = gcc
+CFLAGS ?= -Os -Wall
+LDFLAGS ?=
+CC ?= cc
+
+UNAME_S := $(shell uname -s)
+CNPING_SOURCES = cnping.c ping.c httping.c resolve.c pinghostlist.c
 
 ICONSPATH = freedesktop/icons/hicolor/
 APPNAME = com.github.cntools.cnping
@@ -12,7 +15,7 @@ all : cnping
 
 clean :
 	rm -rf *.o *~ cnping cnping.exe cnping_mac searchnet
-	rm -rf rawdraw/*.o
+	rm -rf rawdraw/*.o CNPing.app tests/macos_smoke
 
 
 # Windows
@@ -39,14 +42,36 @@ resources.o : resources.rc
 
 # Unix
 
-cnping : cnping.c ping.c httping.c resolve.c pinghostlist.c
-	$(CC) $(CFLAGS) -o $@ $^ -lX11 -lm -lpthread -lGL $(LDFLAGS)
+ifeq ($(UNAME_S),Darwin)
+MACOSX_DEPLOYMENT_TARGET ?= 11.0
+export MACOSX_DEPLOYMENT_TARGET
 
-cnping_ogl : cnping.c ping.c httping.c resolve.c pinghostlist.c
+cnping : $(CNPING_SOURCES) rawdraw/CNFGFunctions.c macos/CNFGMac.m macos/CNFGMac.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter %.c %.m,$^) $(LDFLAGS) -framework Cocoa -framework CoreGraphics -lm -lpthread
+
+.PHONY: app cnping_mac test
+app: CNPing.app/Contents/MacOS/cnping
+
+CNPing.app/Contents/MacOS/cnping: cnping macos/Info.plist
+	mkdir -p CNPing.app/Contents/MacOS
+	cp cnping $@
+	cp macos/Info.plist CNPing.app/Contents/Info.plist
+
+test: tests/macos_smoke
+	./tests/macos_smoke
+
+tests/macos_smoke: tests/macos_smoke.c $(CNPING_SOURCES) rawdraw/CNFGFunctions.c macos/CNFGMac.m macos/CNFGMac.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(filter-out cnping.c,$(filter %.c %.m,$^)) $(LDFLAGS) -framework Cocoa -framework CoreGraphics -lm -lpthread
+
+cnping_mac: cnping
+	@echo "Built the native macOS executable. Use 'make app' for a Finder app."
+else
+cnping : $(CNPING_SOURCES)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lX11 -lm -lpthread -lGL
+
+cnping_ogl : $(CNPING_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $^ -DCNFGOGL $(CFLAGS) -lX11 -lm -lpthread $(LDFLAGS) -lGL
-
-cnping_mac : cnping.c ping.c httping.c resolve.c pinghostlist.c
-	$(CC) -o cnping $^ -x objective-c -framework Cocoa -framework QuartzCore -lm -lpthread -DOSX
+endif
 
 searchnet : ping.c searchnet.c resolve.c
 	$(CC) $(CFLAGS) -o $@ $^ -lpthread
